@@ -14,11 +14,21 @@
 
 ### 파싱 관찰 (1일차): PDF 9종
 | 파일 | 요소 수 | 깨진 것 | 고른 파싱 방법 | 이유 |
-|---|---|---|---|---|
+|---|---:|---|---|---|
+| 01_response_policy_tables.pdf | 78 | Table 요소 미검출 | fast (관찰 기준) | 표 구조 추가 검증 필요 |
+| 02_playbook_credential_dump.pdf | 21 | 확인된 오류 없음 | fast (관찰 기준) | 텍스트 추출 성공 |
+| 03_playbook_ransomware_header_footer.pdf | 31 | 반복 Header/Footer 4개 | fast (관찰 기준) | 반복 요소 제거 필요 |
+| 04_playbook_macro_powershell_code.pdf | 41 | 코드 형식 미검증 | fast (관찰 기준) | 코드 보존 품질 추가 확인 필요 |
+| 05_newsletter_two_column.pdf | 43 | 읽기 순서 미검증 | fast (관찰 기준) | 2단 문서 순서 추가 확인 필요 |
+| 06_false_positive_guide_scanned.pdf | 0 | 텍스트 추출 실패 | fast (관찰 기준) | 스캔본은 fast로 처리 불가 |
+| 07_weekly_report_chart.pdf | 34 | 차트 추출 품질 미검증 | fast (관찰 기준) | 차트 내용 추가 확인 필요 |
+| 08_analyst_notes_attack_en.pdf | 22 | 확인된 오류 없음 | fast (관찰 기준) | 텍스트 추출 성공 |
+| 09_response_matrix_complex_tables.pdf | 237 | Table 요소 미검출 | fast (관찰 기준) | 복잡한 표 구조 추가 검증 필요 |
 
 ### 청킹 값 (1일차) + 🔍 교차 실험 (2일차)
 | max_characters | 청크 수 | Recall@3 | 관찰 | 실험한 사람 |
-|---|---|---|---|---|
+|---|---:|---|---|---|
+| 800 (new_after_n_chars=600) | 19 | 미측정 | 8개 PDF에서 생성, 최대 청크 746자. 06번은 0개. 제목 단위 청킹의 초기 기준값이며 검색 품질은 미검증 | 📘 문서 담당 |
 
 ### 첫 Recall@3 (1일차)
 | 검색 방식 | Recall@3 | 특히 k13·k14 (한국어 질문 → 영어 문서) |
