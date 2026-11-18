@@ -26,13 +26,97 @@ def build_template() -> dict:
     # 시간은 date, pid·ppid·포트·바이트는 long, IP는 ip, 명령줄과 스크립트는 text와 keyword 둘 다(fields 사용).
     # 왜 text와 keyword를 나누는지 DECISIONS.md에 한 줄로 적으세요. (03 문서 1장의 질문)
     properties: dict = {
-        # 예: "host": {"type": "keyword"},
+        # 이벤트 기본 정보
+        "event_id": {
+            "type": "keyword"},
+        "ts": {
+            "type": "date"},
+        "host": {
+            "type": "keyword"},
+        "type": {
+            "type": "keyword"},
+
+        # 프로세스 정보
+        "process": {
+            "properties": {
+                "pid": {
+                    "type": "long"},
+                "ppid": {
+                    "type": "long"},
+                "name": {
+                    "type": "keyword"},
+                "cmdline": { #명령줄 안의 단어나 문장 검색
+                    "type": "text",
+                    "fields": {
+                        "keyword": { # 명령줄 전체 정확한 일치 검색
+                            "type": "keyword"}
+                    }
+                },
+                "parent_name": {
+                    "type": "keyword"},
+                "signed": {
+                    "type": "boolean"},
+                "user": {
+                    "type": "keyword"}
+            }
+        },
+
+        # 네트워크 정보
+        "network": {
+            "properties": {
+                "dst_ip": {
+                    "type": "ip"},
+                "dst_port": {
+                    "type": "long"},
+                "proto": {
+                    "type": "keyword"},
+                "bytes_out": {
+                    "type": "long"}
+            }
+        },
+
+        # 파일 정보
+        "file": {
+            "properties": {
+                "path": {
+                    "type": "keyword"},
+                "action": {
+                    "type": "keyword"},
+                "new_path": {
+                    "type": "keyword"}
+            }
+        },
+
+        # 레지스트리 정보
+        "registry": {
+            "properties": {
+                "key": {
+                    "type": "keyword"},
+                "value": {
+                    "type": "keyword"}
+            }
+        },
+
+        # 스크립트 내용
+        "script_text": {
+            "type": "text",
+            "fields": {
+                "keyword": {
+                    "type": "keyword"}
+            }
+        }
     }
     return {
         "index_patterns": [f"{settings.index_events}-*"],
         "template": {
-            "settings": {"number_of_shards": 1, "number_of_replicas": 0},   # 노드가 1개라 복제본 0 (2-5 깨 보기)
-            "mappings": {"dynamic": "strict", "properties": properties},
+            "settings": {
+                "number_of_shards": 1,
+                "number_of_replicas": 0
+            },  # 노드가 1개라 복제본 0 (2-5 깨 보기)
+            "mappings": {
+                "dynamic": "strict",  # 정리되지 않은 필드 들어오면 문서 저장 거부
+                "properties": properties
+            },
         },
     }
 
@@ -48,7 +132,8 @@ def index_name(ts: str) -> str:
 
 
 def load_jsonl(path: str | Path) -> list[dict]:
-    return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [json.loads(line) for line in
+            Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def index_events(events: list[dict], client=None) -> int:
@@ -57,7 +142,8 @@ def index_events(events: list[dict], client=None) -> int:
     by_index: dict[str, list[dict]] = defaultdict(list)
     for e in events:
         by_index[index_name(e["ts"])].append(e)
-    n = sum(bulk_index(client, ix, docs, id_field="event_id") for ix, docs in by_index.items())
+    n = sum(bulk_index(client, ix, docs, id_field="event_id") for ix, docs in
+            by_index.items())
     client.indices.refresh(index=f"{settings.index_events}-*")
     return n
 
