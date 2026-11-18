@@ -7,3 +7,16 @@ instructor
 docs
 tests/__pycache__
 data/sim*.jsonl
+
+# SSH keys and certificates
+**/*.pem
+**/*.key
+**/id_rsa
+**/id_ed25519
+
+# Local secrets and Kubernetes credentials
+.env.*
+**/.env
+**/.env.*
+**/.kube
+**/kubeconfig
