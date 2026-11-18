@@ -23,13 +23,41 @@ def parse_pdf(path: str | Path, strategy: str | None = None) -> list:
     from unstructured.partition.auto import partition
 
     strategy = strategy or settings.parse_strategy
-    # TODO[DOC-1]: partition()을 호출합니다. 파싱 방법은 strategy 변수로 받고,
-    # 언어는 한국어와 영어(languages), 표 구조 추출(infer_table_structure)을 켭니다.
-    raise NotImplementedError("TODO[DOC-1]")
+    return partition(
+        filename=str(path),
+        strategy=strategy,
+        languages=["ko", "en"],
+        infer_table_structure=True,
+    )
 
+
+from collections import defaultdict
 
 def drop_header_footer(elements: list) -> list:
-    """페이지마다 반복되는 머리말·꼬리말("대외비" 등)을 걸러냅니다. 03번 PDF로 확인하세요."""
-    # TODO[DOC-2]: category가 Header, Footer인 요소를 뺀 목록을 돌려줍니다.
-    # 같은 글이 여러 페이지에 반복되는데 Header/Footer로 분류되지 않는 경우도 있습니다. 결과를 눈으로 확인하세요.
-    raise NotImplementedError("TODO[DOC-2]")
+    """여러 페이지에서 반복되는 Header/Footer만 제거합니다."""
+
+    occurrences = defaultdict(set)
+
+    for el in elements:
+        if el.category not in ("Header", "Footer"):
+            continue
+
+        text = " ".join(str(el).split())
+        page = getattr(el.metadata, "page_number", None)
+
+        if text and page is not None:
+            occurrences[text].add(page)
+
+    repeated = {
+        text
+        for text, pages in occurrences.items()
+        if len(pages) >= 2
+    }
+
+    return [
+        el for el in elements
+        if not (
+            el.category in ("Header", "Footer")
+            and " ".join(str(el).split()) in repeated
+        )
+    ]

@@ -37,11 +37,34 @@ def vector_search(query: str, k: int = 10) -> list[dict]:
     return _hits(get_client().search(index=settings.index_kb, body=body))
 
 
+
 def rrf_fuse(result_lists: list[list[dict]], top_n: int) -> list[dict]:
-    """여러 검색 결과를 순위로 합칩니다. 결과 하나하나에는 "id"가 있습니다."""
-    # TODO[DOC-5]: 결과 목록마다 순위(1부터)를 매겨 문서 id별로 1 / (RRF_K + 순위)를 더하고,
-    # 합계가 큰 순서로 top_n개를 돌려줍니다. 돌려줄 때 "score"를 RRF 점수로 바꿉니다.
-    raise NotImplementedError("TODO[DOC-5]")
+    """검색 결과의 순위를 이용해 RRF 점수를 계산합니다."""
+    scores = {}
+    documents = {}
+
+    for results in result_lists:
+        for rank, hit in enumerate(results, start=1):
+            doc_id = hit["id"]
+
+            scores[doc_id] = scores.get(doc_id, 0.0) + (
+                1.0 / (RRF_K + rank)
+            )
+
+            if doc_id not in documents:
+                documents[doc_id] = hit.copy()
+
+    ranked_ids = sorted(
+        scores,
+        key=lambda doc_id: scores[doc_id],
+        reverse=True,
+    )
+
+    return [
+        {**documents[doc_id], "score": scores[doc_id]}
+        for doc_id in ranked_ids[:top_n]
+    ]
+
 
 
 def search(query: str, k: int = 3, mode: str = "hybrid") -> list[dict]:
