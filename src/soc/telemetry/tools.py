@@ -18,7 +18,7 @@ from ..config import settings
 from ..osclient import get_client
 
 EVENTS = f"{settings.index_events}-*"
-CMD_MAX = 120           # 명령줄 요약 길이
+CMD_MAX = 120  # 명령줄 요약 길이
 MAX_ANCESTORS = 5
 TIMELINE_LIMIT = 100
 
@@ -31,15 +31,23 @@ def _search(body: dict) -> list[dict]:
 def summarize(e: dict) -> dict:
     """기록 하나를 LLM에게 넘길 모양으로 줄입니다. (이미 만들어 둔 도우미)"""
     p = e.get("process", {})
-    out = {"event_id": e["event_id"], "ts": e["ts"], "type": e["type"],
-           "pid": p.get("pid"), "ppid": p.get("ppid"), "name": p.get("name"),
-           "cmdline": (p.get("cmdline") or "")[:CMD_MAX], "user": p.get("user"), "signed": p.get("signed")}
+    out = {
+        "event_id": e["event_id"],
+        "ts": e["ts"],
+        "type": e["type"],
+        "pid": p.get("pid"),
+        "ppid": p.get("ppid"),
+        "name": p.get("name"),
+        "cmdline": (p.get("cmdline") or "")[:CMD_MAX],
+        "user": p.get("user"),
+        "signed": p.get("signed")}
     if e.get("network"):
         n = e["network"]
         out["detail"] = f"{n['dst_ip']}:{n['dst_port']} ({n.get('bytes_out', 0)} bytes)"
     elif e.get("file"):
         f = e["file"]
-        out["detail"] = f"{f['action']} {f['path']}" + (f" → {f['new_path']}" if f.get("new_path") else "")
+        out["detail"] = f"{f['action']} {f['path']}" + (
+            f" → {f['new_path']}" if f.get("new_path") else "")
     elif e.get("registry"):
         out["detail"] = f"{e['registry']['key']} = {e['registry']['value']}"
     elif e.get("script_text"):
@@ -57,8 +65,20 @@ def _iso(t: datetime) -> str:
 
 def _find_process(host: str, pid: int) -> dict | None:
     """host에서 pid를 가진 '프로세스 생성' 기록 하나."""
-    rows = _search({"size": 1, "sort": [{"ts": "desc"}], "query": {"bool": {"filter": [
-        {"term": {"host": host}}, {"term": {"type": "process"}}, {"term": {"process.pid": pid}}]}}})
+    rows = _search({
+        "size": 1,
+        "sort": [{
+            "ts": "desc"}],
+        "query": {
+            "bool": {
+                "filter": [
+                    {
+                        "term": {
+                            "host": host}}, {
+                        "term": {
+                            "type": "process"}}, {
+                        "term": {
+                            "process.pid": pid}}]}}})
     return rows[0] if rows else None
 
 
@@ -74,20 +94,109 @@ def get_process_tree(host: str, pid: int) -> dict:
     # 반드시 host까지 같이 조건에 넣으세요. 다른 PC에 같은 pid가 있을 수 있습니다. (02 문서 9-2 고장 예상표)
     # 돌려줄 모양: {"host", "pid", "process": 요약 또는 None, "ancestors": [가까운 부모부터 요약], "children": [요약]}
     # 요약은 summarize()를 쓰고, 프로세스 기록을 찾을 때는 _find_process()를 쓰면 됩니다.
-    raise NotImplementedError("TODO[REC-2]")
+    process = _find_process(host, pid)
+
+    # REC-2: 부모를 최대 5단계까지 추적
+    ancestors = []
+    current = process
+    visited = {pid}
+
+    for _ in range(MAX_ANCESTORS):
+        if current is None:
+            break
+
+        parent_pid = current.get("process", {}).get("ppid")
+
+        # 부모가 없거나 순환 관계라면 추적 중단
+        if parent_pid is None or parent_pid in visited:
+            break
+
+        visited.add(parent_pid)
+        parent = _find_process(host, parent_pid)
+
+        # 부모 이벤트가 없어도 오류 없이 중단
+        if parent is None:
+            break
+
+        ancestors.append(summarize(parent))
+        current = parent
+
+    # 직접 자식: process.ppid == 현재 pid
+    children = _search({
+        "size": 100,
+        "sort": [{
+            "ts": "asc"}],
+        "query": {
+            "bool": {
+                "filter": [
+                    {
+                        "term": {
+                            "host": host}},
+                    {
+                        "term": {
+                            "type": "process"}},
+                    {
+                        "term": {
+                            "process.ppid": pid}},
+                ]
+            }
+        },
+    })
+
+    return {
+        "host": host,
+        "pid": pid,
+        "process": summarize(process) if process else None,
+        "ancestors": ancestors,
+        "children": [summarize(e) for e in children],
+    }
 
 
 def get_process_activity(host: str, pid: int) -> dict:
-    """한 프로세스가 한 일을 시간순으로 봅니다: 네트워크 연결, 파일 생성·변경, 레지스트리 변경, 실행한 스크립트.
+    """특정 호스트의 프로세스가 수행한 파일·네트워크 연결, 파일 생성·변경, 레지스트리 변경, 실행한 스크립트를 시간순으로 조회합니다.
     '이 프로세스가 무엇을 남겼나(파일, 통신)'를 확인할 때 씁니다.
 
+    의심 프로세스가 실제로 어떤 행위를 했는지 조사할 때 사용합니다.
+
     Args:
-        host: PC 이름 (예: WS-007)
-        pid: 프로세스 번호
+        host: 조사할 PC 이름 (예: WS-007)
+        pid: 조사할 프로세스 번호
     """
     # TODO[REC-3]: host와 pid가 같은 기록 중 type이 network, file, registry, script인 것을 시간순으로 (최대 50건).
     # 돌려줄 모양: {"host", "pid", "events": [summarize(e) ...]}
-    raise NotImplementedError("TODO[REC-3]")
+    # 동일 호스트와 PID에서 발생한 활동 검색
+    events = _search({
+        "size": 50,
+        "sort": [{
+            "ts": "asc"}],
+        "query": {
+            "bool": {
+                "filter": [
+                    {
+                        "term": {
+                            "host": host}},
+                    {
+                        "term": {
+                            "process.pid": pid}},
+                    {
+                        "terms": {
+                            "type": [
+                                "network",
+                                "file",
+                                "registry",
+                                "script",
+                            ]
+                        }},
+                ]
+            }
+        },
+    })
+
+    return {
+        "host": host,
+        "pid": pid,
+        "events": [summarize(e) for e in events],
+    }
 
 
 def get_host_timeline(host: str, around_ts: str, minutes: int = 10) -> dict:
@@ -95,16 +204,53 @@ def get_host_timeline(host: str, around_ts: str, minutes: int = 10) -> dict:
     알림 직전·직후에 다른 수상한 활동(다른 프로그램, 다른 통신)이 있었는지 넓게 볼 때 씁니다.
 
     Args:
-        host: PC 이름 (예: WS-007)
+        host: 조사할 PC 이름 (예: WS-007)
         around_ts: 기준 시각 (ISO 형식, 예: 2026-11-16T09:12:02Z). 보통 알림 시각
         minutes: 기준 시각 앞뒤로 몇 분까지 볼지 (기본 10)
     """
     # TODO[REC-4]: host가 같고 ts가 [around_ts - minutes, around_ts + minutes] 안인 기록을 시간순으로 (최대 TIMELINE_LIMIT건).
     # 결과가 잘렸으면 truncated=True로 알려 줍니다 (LLM이 범위를 줄여 다시 부를 수 있게).
     # 돌려줄 모양: {"host", "from", "to", "events": [summarize(e) ...], "truncated": bool}
-    raise NotImplementedError("TODO[REC-4]")
+    # 조회할 시작 시각과 종료 시각 계산
+    center = _parse_ts(around_ts)
+    start = center - timedelta(minutes=minutes)
+    end = center + timedelta(minutes=minutes)
 
+    # 제한보다 한 건 더 조회하여 결과 잘림 여부 확인
+    events = _search({
+        "size": TIMELINE_LIMIT + 1,
+        "sort": [{
+                     "ts": "asc"}],
+        "query": {
+            "bool": {
+                "filter": [
+                    {
+                        "term": {
+                            "host": host}},
+                    {
+                        "range": {
+                            "ts": {
+                                "gte": _iso(start),
+                                "lte": _iso(end),
+                            }
+                        }},
+                ]
+            }
+        },
+    })
 
+    truncated = len(events) > TIMELINE_LIMIT
 
+    return {
+        "host": host,
+        "from": _iso(start),
+        "to": _iso(end),
+        "events": [
+            summarize(e)
+            for e in events[:TIMELINE_LIMIT]
+        ],
+        "truncated": truncated,
+    }
 
-TELEMETRY_TOOLS = [tool(get_process_tree), tool(get_process_activity), tool(get_host_timeline)]
+TELEMETRY_TOOLS = [tool(get_process_tree), tool(get_process_activity),
+                   tool(get_host_timeline)]
