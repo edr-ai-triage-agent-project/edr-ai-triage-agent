@@ -792,3 +792,97 @@ Bind for 127.0.0.1:5432 failed: port is already allocated
 추가로, 포트 충돌 원인을 제거한 뒤에도 호스트 포트 매핑이 복구되지 않아 재검증과 컨테이너 재생성이 필요했다.
 
 기존 02 문서 9-2의 개인 고장 예상표 원문과 비교한 결과는 아직 확인되지 않았다.
+
+---
+
+### [1-1] Kubernetes 이미지 태그 오타
+
+- **환경:** Gabia Ubuntu / k3s
+- **출제:** ChatGPT (🔍 팀원 역할 대행)
+- **진단·복구:** 📘 문서 담당
+- **복구 시간:** 미측정
+- **결과:** 복구 완료
+
+#### 1. 증상
+
+API 배포 후 기존 Pod는 정상 실행됐지만 새 Pod는 실행되지 않았다.
+
+```text
+api-56d66656c4-d2gpz   1/1   Running
+api-7d9c65bc74-5hbt2   0/1   ImagePullBackOff
+```
+
+#### 2. 확인 명령과 출력
+
+먼저 Pod 상태를 확인했다.
+
+```bash
+kubectl --kubeconfig ~/.kube/edr-team7.yaml -n soc get pods
+```
+
+오류 원인을 확인하기 위해 `kubectl describe pod`를 실행했지만, 처음에는 kubeconfig를 지정하지 않아 `localhost:8080 connection refused` 오류가 발생했다.
+
+kubeconfig를 지정해 다시 실행했다.
+
+```bash
+kubectl --kubeconfig ~/.kube/edr-team7.yaml -n soc describe pod api-7d9c65bc74-5hbt2
+```
+
+**Events 주요 출력**
+
+```text
+Failed to pull image "...:d2-tset"
+NotFound: ...:d2-tset: not found
+Error: ImagePullBackOff
+```
+
+#### 3. 원인
+
+이미지 태그가 `d2-test`가 아닌 `d2-tset`으로 잘못 설정되어 있었다.
+
+존재하지 않는 이미지를 가져오려고 해서 새 Pod 실행에 실패한 것이다.
+
+#### 4. 조치
+
+이미지 태그를 정상값으로 수정했다.
+
+```bash
+kubectl --kubeconfig ~/.kube/edr-team7.yaml -n soc set image deployment/api \
+  api=ghcr.io/edr-ai-triage-agent-project/edr-ai-triage-agent:d2-test
+```
+
+**복구 확인**
+
+```text
+deployment "api" successfully rolled out
+Deployment READY: 1/1
+HTTP/1.1 200 OK
+{"status":"ok","backend":"memory"}
+```
+
+정상 Pod만 남았고 API 응답도 확인했다.
+
+#### 5. 진단 후 나눔
+
+**📘 진단자 — 가장 오래 걸린 부분**
+
+오류 원인을 확인해야 한다는 건 알았지만 어떤 명령어를 사용해야 하는지 몰라서 헷갈렸다. AI 도움 없이 검색해서 `kubectl describe pod`를 찾았다. 처음에는 kubeconfig를 빠뜨려 오류가 발생했고, 다시 실행해서 Events를 확인했다.
+
+**🔍 출제자 — 나라면 어디부터 봤을지**
+
+`kubectl get pods`로 비정상 Pod를 찾고, `ImagePullBackOff`가 보이면 `kubectl describe pod`의 Events부터 확인했을 것이다.
+
+**다음에 처음 실행할 명령어**
+
+```bash
+kubectl --kubeconfig ~/.kube/edr-team7.yaml -n soc get pods
+```
+
+비정상 Pod가 있으면 `describe pod`로 상세 원인을 확인한다.
+
+#### 6. 재발 방지
+
+- 배포 전에 이미지 이름과 태그를 확인한다.
+- `ImagePullBackOff` 발생 시 Pod Events를 먼저 확인한다.
+- 원격 클러스터 명령에는 kubeconfig를 명시한다.
+- 복구 후 Pod 상태와 API 응답까지 확인한다.
