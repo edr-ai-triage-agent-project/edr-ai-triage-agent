@@ -19,10 +19,33 @@ def build_graph(checkpointer=None):
     g.add_node("recommend", nodes.recommend)
     g.add_node("approval", nodes.approval)
     g.add_node("report", nodes.report)
-    # TODO[AG-3]: 엣지를 잇습니다. 화이트보드 설계(ARCHITECTURE.md)의 갈림길을 코드로 옮기는 단계입니다.
-    # START → investigate, investigate → (tools 또는 judge: nodes.after_investigate), tools → investigate,
-    # judge → guardrail → (investigate 또는 recommend: nodes.after_guardrail), recommend → approval → report → END
-    raise NotImplementedError("TODO[AG-3]")
+    # 1. 시작 → 조사
+    g.add_edge(START, "investigate")
+
+    # 2. 조사 후 도구 호출 여부에 따라 분기
+    g.add_conditional_edges(
+        "investigate",
+        nodes.after_investigate,
+        {"tools": "tools", "judge": "judge"},
+    )
+
+    # 3. 도구 실행 후 다시 조사
+    g.add_edge("tools", "investigate")
+
+    # 4. 판정 → 가드레일
+    g.add_edge("judge", "guardrail")
+
+    # 5. 가드레일 검증 결과에 따라 분기
+    g.add_conditional_edges(
+        "guardrail",
+        nodes.after_guardrail,
+        {"investigate": "investigate", "recommend": "recommend"},
+    )
+
+    # 6. 권고 → 승인 → 리포트 → 종료
+    g.add_edge("recommend", "approval")
+    g.add_edge("approval", "report")
+    g.add_edge("report", END)
     return g.compile(checkpointer=checkpointer)
 
 
