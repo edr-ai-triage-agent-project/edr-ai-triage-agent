@@ -252,5 +252,114 @@ def get_host_timeline(host: str, around_ts: str, minutes: int = 10) -> dict:
         "truncated": truncated,
     }
 
-TELEMETRY_TOOLS = [tool(get_process_tree), tool(get_process_activity),
-                   tool(get_host_timeline)]
+def _get_network_events(host: str, minutes: int) -> list[dict]:
+    """호스트의 최신 네트워크 이벤트를 기준으로 이전 N분 기록을 조회한다."""
+
+    if minutes <= 0:
+        raise ValueError("minutes는 1 이상의 정수여야 합니다.")
+
+    # 1. 해당 호스트의 가장 최근 네트워크 이벤트 조회
+    latest = _search({
+        "size": 1,
+        "sort": [{"ts": "desc"}],
+        "query": {
+            "bool": {
+                "filter": [
+                    {"term": {"host": host}},
+                    {"term": {"type": "network"}},
+                ]
+            }
+        },
+    })
+
+    if not latest:
+        return []
+
+    # 2. 조회 시간 범위 계산
+    end = _parse_ts(latest[0]["ts"])
+    start = end - timedelta(minutes=minutes)
+
+    # 3. 해당 시간 범위의 네트워크 이벤트 조회
+    events = _search({
+        "size": 1001,
+        "sort": [{"ts": "asc"}],
+        "query": {
+            "bool": {
+                "filter": [
+                    {"term": {"host": host}},
+                    {"term": {"type": "network"}},
+                    {
+                        "range": {
+                            "ts": {
+                                "gte": _iso(start),
+                                "lte": _iso(end),
+                            }
+                        }
+                    },
+                ]
+            }
+        },
+    })
+
+    # 조회 상한으로 데이터가 누락되는 상황 방지
+    if len(events) > 1000:
+        raise ValueError("네트워크 이벤트가 1000건을 초과했습니다.")
+
+    return events
+
+def get_network_connections(host: str, minutes: int) -> dict:
+    """특정 PC의 외부 IP별 네트워크 연결 횟수와 간격을 조사합니다.
+
+    같은 외부 IP로 일정한 간격을 두고 반복 연결하는지
+    확인할 때 사용합니다. 주기적인 외부 통신은 의심 행위의
+    근거가 될 수 있지만, 이것만으로 악성을 확정하지 않습니다.
+
+    Args:
+        host: 조사할 PC 이름 (예: WS-002)
+        minutes: 최신 네트워크 이벤트 기준으로 이전 몇 분을 조회할지
+    """
+    events = _get_network_events(host, minutes)
+
+    # 목적지 IP별로 이벤트 분류
+    groups = {}
+
+    for event in events:
+        ip = event.get("network", {}).get("dst_ip")
+        if not ip:
+            continue
+
+        groups.setdefault(ip, []).append(event)
+
+    connections = []
+
+    for ip, rows in sorted(groups.items()):
+        # 시간순 정렬
+        rows.sort(key=lambda e: _parse_ts(e["ts"]))
+
+        # 연속된 연결의 시간 차이 계산 (초)
+        intervals = []
+
+        for i in range(1, len(rows)):
+            previous = _parse_ts(rows[i - 1]["ts"])
+            current = _parse_ts(rows[i]["ts"])
+            intervals.append(int((current - previous).total_seconds()))
+
+        connections.append({
+            "dst_ip": ip,
+            "count": len(rows),
+            "intervals_seconds": intervals,
+            "event_ids": [e["event_id"] for e in rows],
+        })
+
+    return {
+        "host": host,
+        "minutes": minutes,
+        "connections": connections,
+    }
+
+TELEMETRY_TOOLS = [
+    tool(get_process_tree),
+    tool(get_process_activity),
+    tool(get_host_timeline),
+    tool(get_network_connections),
+]

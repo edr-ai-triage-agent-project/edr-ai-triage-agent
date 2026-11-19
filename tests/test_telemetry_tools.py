@@ -96,3 +96,90 @@ def test_mapping_types():
     assert props["process"]["properties"]["pid"]["type"] == "long"
     assert props["process"]["properties"]["cmdline"]["type"] == "text"
     assert "keyword" in props["process"]["properties"]["cmdline"]["fields"]
+
+def test_get_network_connections(monkeypatch):
+    """반복 네트워크 연결의 횟수, 간격, event_id를 검증한다."""
+    events = [
+        {
+            "event_id": "evt-101",
+            "ts": "2026-11-16T09:00:00Z",
+            "network": {"dst_ip": "203.0.113.10"},
+        },
+        {
+            "event_id": "evt-102",
+            "ts": "2026-11-16T09:05:00Z",
+            "network": {"dst_ip": "203.0.113.10"},
+        },
+        {
+            "event_id": "evt-103",
+            "ts": "2026-11-16T09:10:00Z",
+            "network": {"dst_ip": "203.0.113.10"},
+        },
+        {
+            "event_id": "evt-104",
+            "ts": "2026-11-16T09:10:00Z",
+            "network": {"dst_ip": "203.0.113.20"},
+        },
+    ]
+
+    # OpenSearch 대신 가상 데이터를 반환
+    monkeypatch.setattr(
+        tools,
+        "_get_network_events",
+        lambda host, minutes: events,
+    )
+
+    result = tools.get_network_connections("WS-002", 15)
+
+    assert result["host"] == "WS-002"
+    assert result["minutes"] == 15
+
+    connections = {
+        item["dst_ip"]: item
+        for item in result["connections"]
+    }
+
+    assert connections["203.0.113.10"]["count"] == 3
+    assert connections["203.0.113.10"]["intervals_seconds"] == [300, 300]
+    assert connections["203.0.113.10"]["event_ids"] == [
+        "evt-101", "evt-102", "evt-103"
+    ]
+
+    assert connections["203.0.113.20"]["count"] == 1
+    assert connections["203.0.113.20"]["intervals_seconds"] == []
+    assert connections["203.0.113.20"]["event_ids"] == ["evt-104"]
+
+def test_get_network_events_query(monkeypatch):
+    """최신 이벤트를 기준으로 지정한 시간 범위를 조회하는지 검증한다."""
+    queries = []
+
+    def fake_search(body):
+        queries.append(body)
+        if len(queries) == 1:
+            return [{
+                "event_id": "evt-103",
+                "ts": "2026-11-16T09:10:00Z",
+                "host": "WS-002",
+                "type": "network",
+            }]
+        return []
+
+    monkeypatch.setattr(tools, "_search", fake_search)
+
+    result = tools._get_network_events("WS-002", 10)
+
+    assert result == []
+    assert len(queries) == 2
+
+    filters = queries[1]["query"]["bool"]["filter"]
+
+    assert {"term": {"host": "WS-002"}} in filters
+    assert {"term": {"type": "network"}} in filters
+    assert {
+        "range": {
+            "ts": {
+                "gte": "2026-11-16T09:00:00Z",
+                "lte": "2026-11-16T09:10:00Z",
+            }
+        }
+    } in filters
