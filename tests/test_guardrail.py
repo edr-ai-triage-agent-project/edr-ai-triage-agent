@@ -50,3 +50,76 @@ def test_liar_is_not_trusted(liar):
     assert FAKE_ID not in r["evidence_event_ids"], "지어낸 근거가 리포트에 남았습니다"
     assert r["verdict"] != "malicious", "근거가 부족한데 악성 판정이 그대로 나갔습니다"
     assert any(not g["ok"] for g in r["guardrail_log"])
+
+def test_guardrail_first_failure_requests_retry(monkeypatch):
+    """첫 검증 실패 시 재조사를 요청하는지 확인."""
+    monkeypatch.setattr(nodes.settings, "guardrail_on_fail", "retry")
+    monkeypatch.setattr(nodes.settings, "max_guardrail_retries", 1)
+
+    state = {
+        "alert": ALERT,
+        "verdict": {
+            "verdict": "malicious",
+            "evidence_event_ids": ["evt-00000023", "evt-99999999"],
+        },
+        "seen_event_ids": [],
+        "guardrail_retries": 0,
+    }
+
+    result = nodes.check_guardrail(state)
+
+    assert result["guardrail"]["ok"] is False
+    assert result["guardrail_retries"] == 1
+    assert "messages" in result
+    assert "verdict" not in result
+
+
+def test_guardrail_retry_failure_downgrades(monkeypatch):
+    """재조사 후에도 실패하면 악성 판정을 의심으로 변경."""
+    monkeypatch.setattr(nodes.settings, "guardrail_on_fail", "retry")
+    monkeypatch.setattr(nodes.settings, "max_guardrail_retries", 1)
+
+    state = {
+        "alert": ALERT,
+        "verdict": {
+            "verdict": "malicious",
+            "evidence_event_ids": ["evt-00000023", "evt-99999999"],
+        },
+        "seen_event_ids": [],
+        "guardrail_retries": 1,
+    }
+
+    result = nodes.check_guardrail(state)
+
+    assert result["guardrail"]["ok"] is False
+    assert result["verdict"]["verdict"] == "suspicious"
+    assert result["verdict"]["needs_review"] is True
+
+
+def test_guardrail_removes_fabricated_evidence(monkeypatch):
+    """조회되지 않은 근거가 최종 판정에서 제거되는지 확인."""
+    monkeypatch.setattr(nodes.settings, "guardrail_on_fail", "retry")
+    monkeypatch.setattr(nodes.settings, "max_guardrail_retries", 1)
+
+    state = {
+        "alert": ALERT,
+        "verdict": {
+            "verdict": "malicious",
+            "evidence_event_ids": [
+                "evt-00000023",
+                "evt-00000024",
+                "evt-99999999",
+            ],
+        },
+        "seen_event_ids": ["evt-00000024"],
+        "guardrail_retries": 1,
+    }
+
+    result = nodes.check_guardrail(state)
+
+    assert result["verdict"]["evidence_event_ids"] == [
+        "evt-00000023",
+        "evt-00000024",
+    ]
+    assert "evt-99999999" not in result["verdict"]["evidence_event_ids"]
+    assert result["verdict"]["needs_review"] is True
