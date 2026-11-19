@@ -177,20 +177,27 @@ def recommend(state: TriageState) -> dict:
     # 4. 플레이북 검색 실행
     playbook = search_fn(query=query, k=3)
 
-    # 5. 판정 결과와 검색된 플레이북을 LLM에 전달
+    # Recommendation 형식으로 응답하는 LLM 준비
     llm = get_llm().with_structured_output(
         Recommendation,
         include_raw=True,
     )
 
+    # 5. 판정 결과와 검색된 플레이북을 LLM에 전달
+    context = {
+        "alert": alert,
+        "verdict": verdict,
+        "playbook": playbook,
+    }
+
     messages = [
         SystemMessage(content=prompt("recommend")),
         HumanMessage(
             content=(
-                f"원본 알림:\n{json.dumps(alert, ensure_ascii=False)}\n\n"
-                f"판정 결과:\n{json.dumps(verdict, ensure_ascii=False)}\n\n"
-                f"검색된 대응 플레이북:\n"
-                f"{json.dumps(playbook, ensure_ascii=False)}\n\n"
+                "원본 알림, 판정 결과, 검색된 플레이북:\n"
+                "```json\n"
+                f"{json.dumps(context, ensure_ascii=False)}\n"
+                "```\n\n"
                 "검색된 플레이북을 근거로 대응 조치를 권고하세요. "
                 "플레이북에 없는 출처를 만들어내지 마세요."
             )
@@ -219,16 +226,53 @@ def approval(state: TriageState) -> dict:
     그래서 interrupt() 앞에 DB 쓰기처럼 한 번만 해야 하는 일을 두지 않습니다.
     """
     actions = state["recommendation"]["actions"]
+
     risky = [a for a in actions if a["action"] in DANGEROUS_ACTIONS]
     # TODO[H-1]: 위험한 조치가 있으면 interrupt()로 멈추고, 승인권자가 판단할 내용을 넘깁니다.
     # (01번 정책 PDF 5장: 대상 호스트, 판정과 신뢰도, ATT&CK 기법, 근거 event_id, 권고 조치)
     # 재개되면 interrupt()가 사람의 결정({"approved": bool, "approver": str, "comment": str})을 돌려줍니다.
     # 돌려줄 것: approval {"required", "decision", ...}, trace ["승인"]
+
+    # 1. 위험한 조치가 없다면 승인 불필요
+    if not risky:
+        return {
+            "approval": {
+                "required": False,
+                "decision": "not_required",
+            },
+            "trace": ["승인"],
+        }
+
+    # 2. 사람에게 보여 줄 승인 요청 정보
+    alert = state["alert"]
+    verdict = state["verdict"]
+
+    request = {
+        "alert_id": alert["alert_id"],
+        "host": alert["host"],
+        "verdict": verdict["verdict"],
+        "confidence": verdict["confidence"],
+        "techniques": verdict.get("techniques", []),
+        "evidence_event_ids": verdict.get("evidence_event_ids", []),
+        "actions": risky,
+    }
+
+    # 3. 실행을 멈추고 사람의 결정을 기다림
+    decision = interrupt(request)
+
+    # 4. 승인 또는 거절 결과 처리
+    approved = decision["approved"]
+
     return {
         "approval": {
-            "required": bool(risky),
-            "decision": "not_implemented"},
-        "trace": ["승인"]}
+            "required": True,
+            "decision": "approved" if approved else "rejected",
+            "approved": approved,
+            "approver": decision.get("approver", ""),
+            "comment": decision.get("comment", ""),
+        },
+        "trace": ["승인"],
+    }
 
 
 # ---------------------------------------------------------------------------- 리포트
