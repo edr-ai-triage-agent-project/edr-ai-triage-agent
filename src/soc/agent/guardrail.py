@@ -8,19 +8,31 @@ from __future__ import annotations
 
 
 def check_evidence_exists(verdict: dict, seen_event_ids: list[str], alert: dict) -> list[str]:
-    """판정이 인용한 event_id가 도구로 실제 조회한 기록 안에 있는지 확인합니다.
+    """판정이 인용한 event_id가 실제 확인된 기록인지 검증합니다."""
 
-    알림 자체의 event_ids(탐지 룰이 붙인 근거)도 확인된 기록으로 칩니다.
-    돌려주는 것: 문제 설명 목록 (문제가 없으면 빈 목록)
-    """
-    # TODO[G-1]: verdict["evidence_event_ids"] 중 seen_event_ids에도, alert["event_ids"]에도 없는 id를 찾아
-    # "조회하지 않은 근거: evt-..." 같은 문제 설명으로 돌려줍니다.
-    return []
+    known_ids = set(seen_event_ids) | set(alert.get("event_ids", []))
+    cited_ids = verdict.get("evidence_event_ids", [])
+
+    problems = []
+
+    for event_id in cited_ids:
+        if event_id not in known_ids:
+            problems.append(f"조회하지 않은 근거: {event_id}")
+
+    return problems
 
 
 def check_malicious_needs_two(verdict: dict) -> list[str]:
-    """악성 판정에는 서로 다른 근거가 2개 이상 있어야 합니다. (01번 정책 PDF 3장 판정 기준)"""
-    # TODO[G-2]: verdict가 "malicious"인데 서로 다른 근거 id가 2개 미만이면 문제 설명을 돌려줍니다.
+    """악성 판정에는 서로 다른 근거가 2개 이상 필요합니다."""
+
+    if verdict.get("verdict") != "malicious":
+        return []
+
+    evidence_ids = set(verdict.get("evidence_event_ids", []))
+
+    if len(evidence_ids) < 2:
+        return ["악성 판정에 필요한 근거가 2개 미만입니다."]
+
     return []
 
 
