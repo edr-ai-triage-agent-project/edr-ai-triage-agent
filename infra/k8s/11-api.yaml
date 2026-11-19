@@ -20,19 +20,17 @@ spec:
         - name: ghcr-pull-secret
       containers:
         - name: api
-          image: ghcr.io/edr-ai-triage-agent-project/edr-ai-triage-agent:d2-test
+          image: ghcr.io/edr-ai-triage-agent-project/edr-ai-triage-agent:d2-postgres
           imagePullPolicy: Always
           ports:
             - name: http
               containerPort: 8000
               protocol: TCP
-          env:
-            - name: BACKEND
-              value: "memory"
-            - name: TELEMETRY_TOOLS
-              value: "mock"
-            - name: KB_TOOLS
-              value: "mock"
+          envFrom:
+            - configMapRef:
+                name: soc-config
+            - secretRef:
+                name: soc-secrets
           readinessProbe:
             httpGet:
               path: /healthz
