@@ -12,6 +12,7 @@
 | `get_process_activity(host, pid)` | 🔍 | `host(str)`, `pid(int)` | `event_id`, `host`, `pid`, `events` | 최대 50건 | 결과가 없으면 `events=[]`. 검색 오류는 예외 처리 |
 | `get_host_timeline(host, around_ts, minutes)` | 🔍 | `host(str)`, `around_ts(str)`, `minutes(int=10)` | `event_id`, `host`, `from`, `to`, `events`, `truncated` | 최대 100건 | 결과가 없으면 `events=[]`, `truncated=False`. 검색 오류는 예외 처리 |
 | `search_playbook(query, k)` | 📘 | `query(str)`, `k(int=3)` | `text`, `source`, `page`, `score` | 최대 5개 | 검색 결과가 없으면 `[]`. 검색 오류는 예외 처리 |
+| `get_network_connections(host, minutes)` | 📘 (교차 작업) | `host(str)`, `minutes(int)` | `host`, `minutes`, `connections` (각 항목: `dst_ip`, `count`, `intervals_seconds`, `event_ids`) | 조회 최대 1,000건 | 결과가 없으면 `connections=[]`. 조회 오류는 예외 처리 |
 
 ## 꼭 합의할 것
 - 🔍 텔레메트리 도구의 모든 결과에는 **`event_id`**가 있다. → 가드레일이 판정 근거를 추적하는 데 씁니다 (2일차 `G-1`).
@@ -21,3 +22,4 @@
 
 | 바꾼 것 | 이유 | 둘 다 동의 |
 |---|---|---|
+| `get_network_connections` 추가 제안 | 반복적인 외부 IP 연결 횟수와 간격을 조사하기 위해 추가. D2-7 교차 작업 | 🔍 동의 |
