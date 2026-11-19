@@ -886,3 +886,316 @@ kubectl --kubeconfig ~/.kube/edr-team7.yaml -n soc get pods
 - `ImagePullBackOff` 발생 시 Pod Events를 먼저 확인한다.
 - 원격 클러스터 명령에는 kubeconfig를 명시한다.
 - 복구 후 Pod 상태와 API 응답까지 확인한다.
+
+
+---
+
+### [2-1] OpenSearch vm.max_map_count 커널 설정 오류
+
+- **환경:** Gabia Ubuntu 24.04.4 / k3s / OpenSearch 2.19.1
+- **진단·복구:** 🔍 기록 담당
+- **장애 출제 역할:** 📘 문서 담당
+- **실습 일자:** 2026-11-19
+- **복구 시간:** 미측정
+- **결과:** 커널 설정 경고 재현 및 복구 완료 / 예상 CrashLoopBackOff 미발생
+
+#### 1. 정상 상태
+
+장애 주입 전 OpenSearch StatefulSet 및 Pod가 정상 실행 중이었다.
+
+```text
+statefulset.apps/opensearch   1/1
+pod/opensearch-0              1/1 Running
+```
+
+커널 설정 확인:
+
+```bash
+sysctl vm.max_map_count
+```
+
+실제 출력:
+
+```text
+vm.max_map_count = 1048576
+```
+
+OpenSearch에서 요구하는 최소값 262144보다 높은 상태였다.
+
+이전 영속성 검증에서 OpenSearch Pod 삭제·재생성 후에도 테스트 문서 1건이 유지되는 것을 확인하였다.
+
+#### 2. 장애 주입
+
+**실습 목적**
+
+서버의 `vm.max_map_count` 값을 낮춘 뒤 OpenSearch Pod를 재생성하여 시작 조건 검사 오류를 관찰한다.
+
+기존 설정을 `ORIGINAL` 변수에 저장하고, 스크립트 종료 시 원래 값으로 복구하도록 설정하였다.
+
+```bash
+ORIGINAL=$(sysctl -n vm.max_map_count)
+
+trap 'sysctl -w "vm.max_map_count=$ORIGINAL"' EXIT
+
+sysctl -w vm.max_map_count=65530
+
+k3s kubectl -n soc delete pod opensearch-0
+```
+
+실제 출력:
+
+```text
+vm.max_map_count = 65530
+pod "opensearch-0" deleted from soc namespace
+```
+
+커널 설정 변경과 Pod 삭제가 정상적으로 수행되었다.
+
+#### 3. 증상 및 증거 수집
+
+**예상 증상**
+
+- OpenSearch 시작 실패
+- Pod `CrashLoopBackOff`
+- Bootstrap Check 오류 로그
+
+**실제 Pod 상태**
+
+실행 명령:
+
+```bash
+k3s kubectl -n soc rollout status \
+  statefulset/opensearch --timeout=90s
+
+k3s kubectl -n soc get pod opensearch-0 -o wide
+```
+
+실제 출력:
+
+```text
+Waiting for 1 pods to be ready...
+partitioned roll out complete: 1 new pods have been updated...
+
+NAME           READY   STATUS    RESTARTS   AGE   IP
+opensearch-0   1/1     Running   0          31s   10.42.0.15
+```
+
+예상했던 `CrashLoopBackOff`는 발생하지 않았다.
+
+**Kubernetes 이벤트**
+
+실행 명령:
+
+```bash
+k3s kubectl -n soc describe pod opensearch-0
+```
+
+주요 출력:
+
+```text
+Normal  Scheduled  Successfully assigned soc/opensearch-0 to edr-team7
+Normal  Pulled     Container image "opensearchproject/opensearch:2.19.1" already present on machine
+Normal  Created    Container created
+Normal  Started    Container started
+```
+
+Pod 스케줄링, 컨테이너 생성 및 시작이 정상적으로 진행되었다.
+
+**OpenSearch 로그**
+
+실행 명령:
+
+```bash
+k3s kubectl -n soc logs opensearch-0 --tail=100
+```
+
+실제 오류 관련 로그:
+
+```text
+[WARN ][o.o.b.BootstrapChecks] [opensearch-0] max virtual memory areas vm.max_map_count [65530] is too low, increase to at least [262144]
+```
+
+이어지는 로그:
+
+```text
+[INFO ][o.o.n.Node] [opensearch-0] started
+```
+
+커널 설정이 요구 기준보다 낮다는 경고는 발생했지만 OpenSearch 프로세스는 정상적으로 시작되었다.
+
+**이전 컨테이너 로그 확인**
+
+```bash
+k3s kubectl -n soc logs opensearch-0 \
+  --previous --tail=100
+```
+
+실제 출력:
+
+```text
+Error from server (BadRequest): previous terminated container "opensearch" in pod "opensearch-0" not found
+```
+
+새 Pod에서 종료된 이전 컨테이너의 로그는 확인되지 않았다.
+
+#### 4. 원인 판단
+
+**직접 확인한 원인**
+
+Linux 커널 설정값을 `1048576`에서 `65530`으로 낮추면서 OpenSearch가 요구하는 최소 메모리 매핑 영역 수인 `262144`보다 작아졌다.
+
+OpenSearch Bootstrap Check가 이를 감지하고 경고 로그를 출력하였다.
+
+**예상과 달리 프로세스가 종료되지 않은 이유**
+
+현재 OpenSearch 설정:
+
+```yaml
+- name: discovery.type
+  value: "single-node"
+```
+
+OpenSearch의 단일 노드 실행 설정에서는 일부 Bootstrap Check가 강제되지 않아 경고만 기록하고 정상적으로 시작할 수 있다.
+
+현재 관찰 결과는 해당 동작과 일치한다.
+
+다만 단일 노드 설정이 이번 경고 처리의 직접적인 원인이라는 사실을 추가 설정 변경 실험으로 검증한 것은 아니다.
+
+따라서 실제 결과는 다음과 같이 구분한다.
+
+- 커널 설정 오류: 실제 재현
+- Bootstrap Check 경고: 실제 확인
+- OpenSearch 시작 실패: 미발생
+- CrashLoopBackOff: 미발생
+
+#### 5. 조치 및 복구
+
+장애 수집 스크립트 종료 시 기존 설정으로 복원되었다.
+
+실제 출력:
+
+```text
+vm.max_map_count = 1048576
+```
+
+원래 설정을 복구한 뒤 OpenSearch Pod를 다시 생성하였다.
+
+```bash
+sudo -n k3s kubectl -n soc delete pod opensearch-0
+
+sudo -n k3s kubectl -n soc rollout status \
+  statefulset/opensearch --timeout=240s
+```
+
+실제 출력:
+
+```text
+pod "opensearch-0" deleted from soc namespace
+
+Waiting for 1 pods to be ready...
+partitioned roll out complete: 1 new pods have been updated...
+```
+
+#### 6. 복구 후 재검증
+
+실행 명령:
+
+```bash
+sysctl vm.max_map_count
+
+sudo -n k3s kubectl -n soc get sts,pods,pvc
+```
+
+실제 결과:
+
+```text
+vm.max_map_count = 1048576
+
+statefulset.apps/opensearch   1/1
+
+pod/api-56d66656c4-d2gpz   1/1 Running
+pod/opensearch-0            1/1 Running
+
+persistentvolumeclaim/data-opensearch-0   Bound
+```
+
+PVC는 기존 PV를 유지하였다.
+
+```text
+pvc-0ed49159-735b-47d4-8264-cde77881aed1
+```
+
+**테스트 데이터 영속성 확인**
+
+```bash
+sudo -n k3s kubectl -n soc exec opensearch-0 -- \
+  curl -sS "http://127.0.0.1:9200/edr-d2-persistence-test/_count?pretty"
+```
+
+실제 출력:
+
+```json
+{
+  "count": 1,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
+  }
+}
+```
+
+복구 후 OpenSearch Pod가 Ready 상태로 돌아왔으며 기존 테스트 문서 1건이 유지되었다.
+
+#### 7. 고장 예상표와 실제 결과 비교
+
+| 비교 항목 | 고장 예상표 | 실제 결과 |
+|---|---|---|
+| 커널 설정 | 65530으로 변경 | 변경 성공 |
+| Pod 재생성 | 삭제 후 재시작 | 재생성 성공 |
+| 예상 Pod 증상 | CrashLoopBackOff | Running |
+| 예상 로그 | max_map_count 관련 오류 | WARN 발생 |
+| 프로세스 시작 | 시작 실패 예상 | 정상 시작 |
+| 복구 후 상태 | Ready | Ready |
+| 데이터 유지 | 확인 필요 | 1건 유지 |
+
+**비교 결과**
+
+커널 설정 오류 자체는 실제로 재현되었다.
+
+그러나 예상한 `CrashLoopBackOff` 대신 경고 로그만 발생하고 OpenSearch가 정상 시작되었다.
+
+단일 노드 설정에서 Bootstrap Check가 강제되지 않은 것이 유력한 원인으로 판단된다.
+
+#### 8. 진단 후 나눔
+
+**🔍 진단자 — 오래 걸린 부분과 이유**
+
+- 가장 판단이 필요했던 부분은 `vm.max_map_count`를 `65530`으로 낮췄는데도 예상한 `CrashLoopBackOff`가 발생하지 않은 점이었다.
+- 처음에는 커널 설정 변경이 정상적으로 적용되지 않았을 가능성을 고려했으나, OpenSearch 로그에서 `vm.max_map_count [65530] is too low` 경고를 확인하였다.
+- 따라서 설정 변경은 적용되었지만 OpenSearch가 종료되지 않았다는 사실을 구분할 수 있었다.
+- 현재 `discovery.type: single-node` 설정에서 Bootstrap Check가 경고로 처리된 것이 유력한 원인으로 판단하였다.
+- 장애 진단에서는 예상한 Pod 상태뿐 아니라 실제 애플리케이션 로그까지 확인하는 것이 중요하다는 점을 배웠다.
+
+**📘 출제자 — 나라면 처음 확인할 곳**
+
+- 먼저 `kubectl get pods`로 OpenSearch Pod가 실제로 `CrashLoopBackOff` 상태인지 확인한다.
+- 이후 `kubectl logs`에서 Bootstrap Check 관련 오류를 확인한다.
+- `vm.max_map_count` 경고가 존재한다면 Ubuntu 서버에서 현재 커널 설정값을 확인하여 요구 기준과 비교한다.
+- Pod가 정상 실행되더라도 로그에 경고가 남아 있을 수 있으므로 Pod 상태만으로 장애 여부를 단정하지 않는다.
+
+**다음에 동일 증상이 발생하면 처음 사용할 명령**
+
+sysctl vm.max_map_count
+
+#### 9. 재발 방지
+
+- OpenSearch 배포 전 호스트의 `vm.max_map_count` 확인
+- 커널 설정 변경 전 기존 값 기록
+- Pod 상태와 애플리케이션 로그를 함께 확인
+- 경고 발생과 실제 서비스 중단을 구분
+- 복구 후 StatefulSet Ready 및 PVC 상태 확인
+- 데이터 영속성은 실제 문서 조회로 재검증
+
+**최종 상태:** 커널 설정 복구, OpenSearch Ready, PVC 유지, 테스트 문서 1건 유지 확인
