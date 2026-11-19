@@ -26,7 +26,7 @@ spec:
 
       containers:
         - name: worker
-          image: ghcr.io/edr-ai-triage-agent-project/edr-ai-triage-agent:d2-test
+          image: ghcr.io/edr-ai-triage-agent-project/edr-ai-triage-agent:d2-postgres
           imagePullPolicy: Always
 
           command:
@@ -39,19 +39,11 @@ spec:
               containerPort: 9100
               protocol: TCP
 
-          env:
-            - name: BACKEND
-              value: "real"
-
-            - name: OPENSEARCH_URL
-              value: "http://opensearch:9200"
-
-            # TODO: D2-13 완료 후 실제 Secret 이름과 Key로 변경
-            - name: POSTGRES_DSN
-              valueFrom:
-                secretKeyRef:
-                  name: replace-with-d2-13-secret
-                  key: POSTGRES_DSN
+          envFrom:
+            - configMapRef:
+                name: soc-config
+            - secretRef:
+                name: soc-secrets
 
           startupProbe:
             httpGet:

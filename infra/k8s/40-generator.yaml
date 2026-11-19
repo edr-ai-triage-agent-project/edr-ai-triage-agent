@@ -26,7 +26,7 @@ spec:
 
       containers:
         - name: generator
-          image: ghcr.io/edr-ai-triage-agent-project/edr-ai-triage-agent:d2-test
+          image: ghcr.io/edr-ai-triage-agent-project/edr-ai-triage-agent:d2-postgres
           imagePullPolicy: Always
 
           command:
@@ -35,12 +35,9 @@ spec:
             - soc.simulator.run
             - --loop
 
-          env:
-            - name: BACKEND
-              value: "real"
-
-            - name: OPENSEARCH_URL
-              value: "http://opensearch:9200"
+          envFrom:
+            - configMapRef:
+                name: soc-config
 
           resources:
             requests:
