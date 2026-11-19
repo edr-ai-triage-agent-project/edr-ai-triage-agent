@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: generator
+  namespace: soc
+  labels:
+    app: generator
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: generator
+
+  template:
+    metadata:
+      labels:
+        app: generator
+
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: generator
+          image: ghcr.io/edr-ai-triage-agent-project/edr-ai-triage-agent:d2-postgres
+          imagePullPolicy: Always
+
+          command:
+            - python
+            - -m
+            - soc.simulator.run
+            - --loop
+
+          envFrom:
+            - configMapRef:
+                name: soc-config
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              memory: "512Mi"

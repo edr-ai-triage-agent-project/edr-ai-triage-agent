@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: soc
+  labels:
+    app: worker
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: worker
+
+  template:
+    metadata:
+      labels:
+        app: worker
+
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+
+      terminationGracePeriodSeconds: 180
+
+      containers:
+        - name: worker
+          image: ghcr.io/edr-ai-triage-agent-project/edr-ai-triage-agent:d2-postgres
+          imagePullPolicy: Always
+
+          command:
+            - python
+            - -m
+            - soc.worker
+
+          ports:
+            - name: health
+              containerPort: 9100
+              protocol: TCP
+
+          envFrom:
+            - configMapRef:
+                name: soc-config
+            - secretRef:
+                name: soc-secrets
+
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 30
+
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 18
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              memory: "1Gi"
