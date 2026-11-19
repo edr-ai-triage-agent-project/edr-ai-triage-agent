@@ -85,3 +85,4 @@ Thumbs.db
 # ==========================================
 /data/sim.jsonl
 /data/sim_labels.jsonl
+.env.k8s
