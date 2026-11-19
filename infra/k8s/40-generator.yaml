@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: generator
+  namespace: soc
+  labels:
+    app: generator
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: generator
+
+  template:
+    metadata:
+      labels:
+        app: generator
+
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: generator
+          image: ghcr.io/edr-ai-triage-agent-project/edr-ai-triage-agent:d2-test
+          imagePullPolicy: Always
+
+          command:
+            - python
+            - -m
+            - soc.simulator.run
+            - --loop
+
+          env:
+            - name: BACKEND
+              value: "real"
+
+            - name: OPENSEARCH_URL
+              value: "http://opensearch:9200"
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              memory: "512Mi"

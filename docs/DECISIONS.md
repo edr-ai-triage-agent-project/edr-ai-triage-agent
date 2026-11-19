@@ -315,11 +315,28 @@ EDR 조사에서는 **특정 호스트와 프로세스의 이벤트를 정확하
 
 
 ### 프로브 설계표 (2일차, 인프라 4단계)
+
 | | API | 워커 |
 |---|---|---|
-| liveness | | |
-| readiness | | |
-| 종료 유예 | | |
+| liveness | `/healthz` — API 프로세스 생존 확인. DB 연결 실패만으로 재시작하지 않음 | `/healthz` — 작업 루프의 하트비트 확인. 장시간 알림 처리 중 오탐 방지 필요 |
+| readiness | `/readyz` — OpenSearch·PostgreSQL 연결 확인. 실패 시 HTTP 503 | 별도 설정하지 않음. Worker는 Service를 통해 외부 요청을 받지 않고 직접 알림을 가져옴 |
+| 종료 유예 | 기본값 사용 (30초) | `terminationGracePeriodSeconds` 별도 설정. 처리 중인 알림의 종료 시간을 고려하여 결정 |
+
+**설계 근거**
+
+- API의 liveness는 프로세스 생존 여부만 확인한다.
+- API의 readiness는 외부 의존성인 OpenSearch와 PostgreSQL 연결 상태를 확인한다.
+- Worker는 HTTP 요청을 전달받는 구조가 아니므로 별도 readinessProbe가 필수는 아니다.
+- Worker의 liveness는 하트비트 기반으로 구현하되 정상적인 장시간 작업을 장애로 오판하지 않아야 한다.
+- Worker는 SIGTERM 수신 시 진행 중인 작업을 마치고 종료하도록 설계한다.
+- Worker 종료 유예 시간은 실제 알림 처리 시간과 체크포인트 복구 방식을 검토한 후 확정한다.
+
+**구현 및 검증 상태**
+
+- 기존 Python 코드에서 API `/healthz`, `/readyz`, Worker `/healthz`, `/metrics` 구현 확인
+- Kubernetes Probe 설정 및 실제 장애 상황 검증은 D2-14에서 진행 예정
+- D2-13 PostgreSQL 연동 이후 API readiness 및 Worker 통합 동작 검증 예정
+
 
 ### 평가: 기준점(2일차)과 최종(3일차)
 | 지표 | 기준점 | 최종 | 바뀐 이유 |

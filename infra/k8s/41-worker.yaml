@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: soc
+  labels:
+    app: worker
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: worker
+
+  template:
+    metadata:
+      labels:
+        app: worker
+
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+
+      terminationGracePeriodSeconds: 180
+
+      containers:
+        - name: worker
+          image: ghcr.io/edr-ai-triage-agent-project/edr-ai-triage-agent:d2-test
+          imagePullPolicy: Always
+
+          command:
+            - python
+            - -m
+            - soc.worker
+
+          ports:
+            - name: health
+              containerPort: 9100
+              protocol: TCP
+
+          env:
+            - name: BACKEND
+              value: "real"
+
+            - name: OPENSEARCH_URL
+              value: "http://opensearch:9200"
+
+            # TODO: D2-13 완료 후 실제 Secret 이름과 Key로 변경
+            - name: POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: replace-with-d2-13-secret
+                  key: POSTGRES_DSN
+
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 30
+
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 18
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              memory: "1Gi"
