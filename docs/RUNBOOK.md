@@ -1199,3 +1199,561 @@ sysctl vm.max_map_count
 - 데이터 영속성은 실제 문서 조회로 재검증
 
 **최종 상태:** 커널 설정 복구, OpenSearch Ready, PVC 유지, 테스트 문서 1건 유지 확인
+
+
+---
+
+
+### [4-3] Worker Deployment 중지 및 복구 (🔍 기록 담당)
+
+#### 1. 정상 상태
+
+- 환경: Gabia Ubuntu `edr-team7`, k3s, 네임스페이스 `soc`
+- Worker Deployment: `1/1`
+- 정상 Pod: `worker-7f9fbb888c-hxx2w`
+- Pod IP: `10.42.0.20`
+- Node: `edr-team7`
+- Restart: `0`
+
+확인 명령:
+
+```bash
+sudo -n k3s kubectl get deployment worker -n soc
+sudo -n k3s kubectl get pods -n soc -l app=worker -o wide
+```
+
+#### 2. 장애 주입
+
+Worker Deployment의 원하는 복제본 수를 0으로 변경하였다.
+
+```bash
+sudo -n k3s kubectl scale deployment/worker \
+  -n soc --replicas=0
+```
+
+실제 출력:
+
+```text
+deployment.apps/worker scaled
+```
+
+#### 3. 장애 증상 및 증거
+
+Deployment 조회 결과:
+
+```text
+NAME     READY   UP-TO-DATE   AVAILABLE
+worker   0/0     0            0
+```
+
+Worker Pod 조회 결과:
+
+```text
+No resources found in soc namespace.
+```
+
+Worker Pod가 제거되어 알림 처리 프로세스를 실행할 수 없는 상태가 되었다.
+
+이번 실험에서는 알림 적체 및 재처리까지 검증하지 않았다.
+
+#### 4. 원인 판단
+
+`kubectl scale --replicas=0`으로 Deployment의 Desired State를 0개로 변경하였다.
+
+Kubernetes는 설정된 원하는 상태에 따라 Worker Pod를 제거하였다.
+
+이는 Kubernetes가 예기치 않은 장애를 감지한 것이 아니라, 운영자가 의도적으로 복제본 수를 변경한 실험이다.
+
+#### 5. 조치 및 복구
+
+```bash
+sudo -n k3s kubectl scale deployment/worker \
+  -n soc --replicas=1
+
+sudo -n k3s kubectl rollout status \
+  deployment/worker -n soc --timeout=120s
+```
+
+실제 출력:
+
+```text
+deployment.apps/worker scaled
+deployment "worker" successfully rolled out
+```
+
+#### 6. 복구 후 재검증
+
+| 항목 | 장애 전 | 복구 후 |
+|---|---|---|
+| Pod | worker-7f9fbb888c-hxx2w | worker-7f9fbb888c-jmxzh |
+| IP | 10.42.0.20 | 10.42.0.22 |
+| Node | edr-team7 | edr-team7 |
+| READY | 1/1 | 1/1 |
+| STATUS | Running | Running |
+| RESTARTS | 0 | 0 |
+
+복구 후 로그:
+
+```text
+2026-11-19 11:08:23,713 checkpoint PostgreSQL Checkpointer 초기화 완료
+2026-11-19 11:08:23,723 worker 워커 시작: worker-7f9fbb888c-jmxzh
+```
+
+Health 확인:
+
+```text
+200 heartbeat 2s ago
+```
+
+새 Worker Pod가 생성되었고 PostgreSQL Checkpointer 초기화, OpenSearch HTTP 200 검색, Health HTTP 200을 확인하였다.
+
+#### 7. 실제 결과와 검증 한계
+
+- Worker 중지 및 신규 Pod 생성: 검증 완료
+- Kubernetes Deployment 복제본 수 복원: 검증 완료
+- PostgreSQL Checkpointer 초기화 및 Health 복구: 검증 완료
+- 중지 중 알림 적체 및 복구 후 재처리: 미검증
+- 처리 도중 Pod 강제 종료 및 LangGraph 체크포인트 복원(4-5): 미실습
+
+#### 8. 진단 후 나눔
+
+**🔍 기록 담당 — 확인한 점**
+
+- Deployment가 관리하는 것은 특정 Pod 자체가 아니라 원하는 복제본 수라는 점을 확인하였다.
+- 복구 전후 Pod 이름과 IP가 변경되었으므로 새 Pod 생성 사실을 확인할 수 있었다.
+- `1/1 Running`뿐 아니라 PostgreSQL 초기화 로그와 Health 응답까지 확인하여 복구 여부를 판단하였다.
+
+#### 9. 재발 방지
+
+- Worker Deployment의 `replicas` 값 확인
+- Pod 상태와 실제 애플리케이션 로그를 함께 확인
+- Pod 교체 후 `/healthz` 및 외부 의존성 연결 확인
+- 설정을 임시 변경했다면 원래 복제본 수로 복구되었는지 재검증
+
+**최종 결과:** Worker Deployment `replicas=1` 복구, 신규 Pod Running, PostgreSQL Checkpointer 초기화 및 Health HTTP 200 확인.
+
+
+---
+
+
+### [D2-14 통합 검증] KB 인덱스 미생성으로 인한 Worker AI 분석 실패
+
+- **환경:** Gabia Ubuntu `edr-team7` / k3s / 네임스페이스 `soc`
+- **담당:** 🔍 기록 담당
+- **대상:** Worker Deployment, LangGraph, OpenSearch KB 검색
+- **발견 경위:** D2-14 Worker 통합 기능 검증 중 발견
+- **최종 결과:** Mock KB 환경에서 승인 대기 및 리포트 저장 성공, 원래 환경변수 복구 완료
+- **남은 작업:** 인프라 6단계에서 실제 KB 인덱스 생성 및 문서 적재
+
+#### 1. 정상 동작 기대
+
+Generator가 만든 보안 이벤트를 OpenSearch에 저장하고, 탐지 규칙으로 생성한 알림을 Worker가 분석하는 흐름을 검증한다.
+
+예상 처리 흐름:
+
+```text
+Generator
+    ↓ 이벤트 생성
+OpenSearch (edr-events-*)
+    ↓ 탐지 규칙
+OpenSearch (edr-alerts)
+    ↓ Worker가 알림 획득
+LangGraph AI 분석
+    ↓
+KB 플레이북 검색
+    ↓
+분석 리포트 저장 (triage-reports)
+    ↓
+completed 또는 pending_approval
+```
+
+이번 실습에서는 실제 보안 알림이 Worker까지 전달되는지, LangGraph 분석이 실행되는지, 분석 결과가 저장되는지 확인하는 것을 목표로 했다.
+
+#### 2. 증상 — 실제 KB 검색 중 HTTP 404 발생
+
+가비아 Ubuntu에서 실행 중인 Worker 컨테이너를 통해 `credential_dump` 시나리오를 주입하였다.
+
+**실행 명령**
+
+```bash
+sudo -n k3s kubectl exec -n soc deployment/worker -- \
+  python -m soc.simulator.run --inject credential_dump
+```
+
+**실제 출력**
+
+```text
+'credential_dump'을 WS-007에 주입: 기록 3건, 새 알림 1건 (악성: True)
+```
+
+Generator의 이벤트 생성과 보안 알림 생성까지는 정상 수행되었다.
+
+그러나 Worker가 알림을 분석하는 과정에서 오류가 발생했다.
+
+**Worker 오류 로그**
+
+```text
+2026-11-19 11:12:51,222 opensearch POST http://opensearch:9200/kb-playbooks/_search [status:404 request:0.003s]
+
+worker 처리 실패: al-4a5ea8938693
+
+opensearchpy.exceptions.NotFoundError:
+NotFoundError(404, 'index_not_found_exception', 'no such index [kb-playbooks]', kb-playbooks, index_or_alias)
+```
+
+**오류 발생 위치**
+
+```text
+soc/worker.py
+    ↓
+graph.invoke()
+    ↓
+soc/agent/nodes.py
+    ↓ recommend 노드
+search_playbook()
+    ↓
+soc/kb/search.py
+    ↓ keyword_search()
+OpenSearch kb-playbooks 검색
+    ↓
+HTTP 404 / index_not_found_exception
+```
+
+Worker 프로세스 자체가 종료된 것이 아니라, LangGraph 분석 중 실제 KB 검색 단계에서 예외가 발생하였다.
+
+#### 3. 증거 수집 — 알림 상태와 Worker Metrics
+
+**알림 상태 확인 명령**
+
+```bash
+sudo -n k3s kubectl exec -n soc opensearch-0 -- \
+  curl -fsS 'http://localhost:9200/edr-alerts/_search?size=10&_source_includes=status,attempts,worker,lease_until&filter_path=hits.hits._id,hits.hits._source'
+```
+
+**실제 조회 결과 요약**
+
+| 알림 ID | status | attempts | Worker |
+|---|---|---:|---|
+| `al-f5497182756c` | failed | 1 | worker-7f9fbb888c-jmxzh |
+| `al-4a5ea8938693` | failed | 1 | worker-7f9fbb888c-jmxzh |
+
+두 알림이 `failed` 상태였으며, 각각 한 차례 Worker에 획득된 기록이 있었다.
+
+단, `kb-playbooks` HTTP 404 오류 로그로 직접 원인을 확인한 알림은 `al-4a5ea8938693`이다. 다른 실패 알림의 구체적인 원인은 이번에 별도로 확인하지 않았다.
+
+**Worker Metrics 조회 명령**
+
+```bash
+sudo -n k3s kubectl exec -n soc deployment/worker -- \
+  python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:9100/metrics').read().decode())"
+```
+
+**실제 출력**
+
+```text
+soc_worker_processed 0
+soc_worker_failed 2
+soc_worker_pending_approval 0
+soc_worker_busy 0
+```
+
+**결과 해석**
+
+| 항목 | 값 | 의미 |
+|---|---:|---|
+| processed | 0 | 일반 처리 완료 건수 0 |
+| failed | 2 | 현재 Worker 프로세스의 실패 건수 2 |
+| pending_approval | 0 | 승인 대기 건수 0 |
+| busy | 0 | 조회 시점에 실행 중인 분석 없음 |
+
+알림 획득은 성공했으나 분석이 정상적인 종료 상태에 도달하지 못했다.
+
+#### 4. 원인 판단
+
+**직접 확인한 원인**
+
+Worker의 공통 환경변수는 다음과 같이 설정되어 있었다.
+
+```yaml
+KB_TOOLS: "real"
+```
+
+`KB_TOOLS=real`인 경우 실제 OpenSearch의 KB 인덱스를 검색한다.
+
+그러나 현재 가비아 OpenSearch에는 `kb-playbooks` 인덱스가 없어 검색 요청이 HTTP 404를 반환하였다.
+
+**증거와 원인 비교**
+
+| 증거 | 실제 결과 | 해석 |
+|---|---|---|
+| 이벤트 주입 | 이벤트 3건 생성 | Generator 경로 정상 |
+| 알림 생성 | 새 알림 1건 생성 | 탐지 규칙 동작 확인 |
+| Worker 획득 | attempts=1 | Worker가 알림 획득 |
+| OpenSearch 연결 | 검색 요청에 응답 | OpenSearch 접근 가능 |
+| KB 검색 | HTTP 404 | 검색 대상 인덱스 없음 |
+| LangGraph | recommend 노드에서 예외 | KB 검색 단계 실패 |
+
+따라서 OpenSearch 서버 자체가 중단된 문제는 아니며, **실제 KB 검색에 필요한 인덱스가 준비되지 않은 상태에서 Worker가 real 검색을 수행한 문제**로 판단하였다.
+
+KB 인덱스 생성과 PDF 플레이북 적재는 인프라 6단계에서 진행할 예정이다.
+
+#### 5. 임시 조치 — Worker만 Mock KB 적용
+
+**조치 목적**
+
+아직 준비되지 않은 실제 KB 검색 기능을 제외하고, Worker의 알림 획득·LangGraph 분석·결과 저장 흐름을 검증한다.
+
+팀원이 관리하는 공통 `soc-config`는 변경하지 않기로 했다.
+
+대신 Worker Deployment에만 환경변수를 직접 추가하여 기존 `KB_TOOLS=real` 설정을 임시로 덮어썼다.
+
+**실행 명령**
+
+```bash
+sudo -n k3s kubectl set env deployment/worker \
+  -n soc KB_TOOLS=mock
+
+sudo -n k3s kubectl rollout status \
+  deployment/worker -n soc --timeout=120s
+```
+
+**실제 출력**
+
+```text
+deployment.apps/worker env updated
+Waiting for deployment "worker" rollout to finish: 1 old replicas are pending termination...
+deployment "worker" successfully rolled out
+```
+
+**적용된 환경변수 확인**
+
+```bash
+sudo -n k3s kubectl exec -n soc deployment/worker -- \
+  printenv KB_TOOLS
+```
+
+**실제 출력**
+
+```text
+mock
+```
+
+**명령어 의미**
+
+| 명령/옵션 | 의미 |
+|---|---|
+| `kubectl set env` | Deployment의 컨테이너 환경변수 변경 |
+| `deployment/worker` | 변경할 대상 Deployment |
+| `-n soc` | 대상 네임스페이스 |
+| `KB_TOOLS=mock` | Worker에서 Mock KB 검색 사용 |
+| `rollout status` | 변경된 Pod 배포 완료 확인 |
+| `printenv KB_TOOLS` | 컨테이너에 실제 적용된 환경변수 확인 |
+
+ConfigMap에서 가져오는 `envFrom` 값보다 컨테이너에 직접 지정한 `env` 값이 우선하므로, 공통 설정을 변경하지 않고 Worker만 테스트할 수 있었다.
+
+환경변수 변경으로 Worker Pod가 교체되며, 프로세스 메모리의 Metrics 카운터도 초기화될 수 있다.
+
+#### 6. 재검증 — 실제 알림 분석 및 리포트 저장
+
+Mock KB 적용 후 동일한 유형의 시나리오를 새로 한 번 주입하였다.
+
+**실행 명령**
+
+```bash
+sudo -n k3s kubectl exec -n soc deployment/worker -- \
+  python -m soc.simulator.run --inject credential_dump
+```
+
+**실제 출력**
+
+```text
+'credential_dump'을 WS-007에 주입: 기록 3건, 새 알림 1건 (악성: True)
+```
+
+**새로 생성된 알림 ID**
+
+```text
+al-0d957dbf1977
+```
+
+Worker가 해당 알림을 획득해 분석을 수행하였다.
+
+**Worker Metrics 재확인 결과**
+
+```text
+soc_worker_processed 0
+soc_worker_failed 0
+soc_worker_pending_approval 1
+soc_worker_busy 0
+```
+
+**결과 해석**
+
+- `processed=0`: 일반 완료 건수는 0건
+- `failed=0`: 이번 Worker 프로세스에서 실패 건수 0건
+- `pending_approval=1`: 승인 대기 상태에 도달한 알림 1건
+- `busy=0`: 분석 작업 종료
+
+`processed=0`이라고 해서 분석 실패를 의미하지 않는다.
+
+이번 알림은 사람의 승인이 필요한 `pending_approval` 분기로 이동했기 때문이다.
+
+**OpenSearch 알림 상태 확인**
+
+```bash
+sudo -n k3s kubectl exec -n soc opensearch-0 -- \
+  curl -fsS 'http://localhost:9200/edr-alerts/_doc/al-0d957dbf1977?filter_path=_id,_source.status,_source.attempts,_source.worker'
+```
+
+**실제 출력**
+
+```json
+{
+  "_id": "al-0d957dbf1977",
+  "_source": {
+    "status": "pending_approval",
+    "attempts": 1,
+    "worker": "worker-fd45fdc78-22shw"
+  }
+}
+```
+
+Metrics의 `pending_approval=1`과 OpenSearch에 저장된 알림 상태가 일치하였다.
+
+**분석 리포트 저장 확인**
+
+```bash
+sudo -n k3s kubectl exec -n soc opensearch-0 -- \
+  curl -sS \
+  'http://localhost:9200/triage-reports/_doc/al-0d957dbf1977?filter_path=found,_id,_source.alert_id'
+```
+
+**실제 출력**
+
+```json
+{
+  "_id": "al-0d957dbf1977",
+  "found": true,
+  "_source": {
+    "alert_id": "al-0d957dbf1977"
+  }
+}
+```
+
+**재검증 결론**
+
+- 실제 보안 이벤트 및 알림 생성 성공
+- Worker 알림 획득 성공
+- Mock KB 기반 LangGraph 분석 흐름 검증
+- `pending_approval` 상태 저장 성공
+- `triage-reports` 문서 저장 성공
+
+단, 이 결과는 실제 KB 기반 RAG 검색 성공을 의미하지 않는다. 또한 저장된 리포트의 내용 품질 및 승인 이후 최종 처리까지 평가한 것은 아니다.
+
+#### 7. 임시 환경변수 원상복구
+
+**복구 목적**
+
+D2-14 통합 검증이 끝났으므로 Worker에서만 적용한 임시 Mock 설정을 제거한다.
+
+팀의 기존 공통 환경변수 `KB_TOOLS=real`이 다시 적용되도록 복구한다.
+
+**실행 명령**
+
+```bash
+sudo -n k3s kubectl set env deployment/worker \
+  -n soc KB_TOOLS-
+
+sudo -n k3s kubectl rollout status \
+  deployment/worker -n soc --timeout=120s
+```
+
+**실제 출력**
+
+```text
+deployment.apps/worker env updated
+Waiting for deployment "worker" rollout to finish: 1 old replicas are pending termination...
+deployment "worker" successfully rolled out
+```
+
+여기서 `KB_TOOLS-`는 환경변수 값을 빈 문자열로 설정하는 것이 아니라, Deployment에 직접 추가한 환경변수를 제거하는 문법이다.
+
+**환경변수 복구 확인**
+
+```bash
+sudo -n k3s kubectl exec -n soc deployment/worker -- \
+  printenv KB_TOOLS
+```
+
+**실제 출력**
+
+```text
+real
+```
+
+**Health 재검증**
+
+```bash
+sudo -n k3s kubectl exec -n soc deployment/worker -- \
+  python -c "import urllib.request as u; r=u.urlopen('http://127.0.0.1:9100/healthz'); print(r.status, r.read().decode())"
+```
+
+**실제 출력**
+
+```text
+200 heartbeat 2s ago
+```
+
+원래 환경변수로 복구되었으며 새 Worker Pod의 Health 응답도 정상임을 확인하였다.
+
+#### 8. 장애 원인과 검증 결과 비교
+
+| 비교 항목 | 최초 상태 (Real KB) | 임시 조치 (Mock KB) | 원상복구 |
+|---|---|---|---|
+| KB_TOOLS | real | mock | real |
+| KB 검색 | kb-playbooks 404 | Mock 검색 | 실제 KB 사용 설정 |
+| Worker 분석 | 실패 발생 | 승인 대기 도달 | 재검증하지 않음 |
+| Metrics failed | 2 | 0 | Pod 교체로 새 카운터 |
+| pending_approval | 0 | 1 | 새 Pod에서 별도 집계 |
+| 리포트 저장 | 해당 테스트에서 성공 미확인 | found=true | 기존 문서 유지 여부 별도 미조회 |
+| Health | 정상 | Worker 재배포 성공 | HTTP 200 |
+
+**비교 결과**
+
+동일한 유형의 보안 알림에서 Mock KB를 적용한 경우에는 승인 대기 상태와 리포트 저장까지 도달하였다.
+
+이는 최초 실패가 실제 KB 인덱스 미준비 문제와 관련되어 있다는 판단을 뒷받침한다.
+
+다만 최초 알림을 재처리한 것이 아니라 새로운 알림으로 검증했으므로, 기존 실패 알림의 복구 성공까지 입증한 것은 아니다.
+
+#### 9. 진단 후 나눔
+
+**🔍 기록 담당 — 확인한 점**
+
+- Worker Pod가 `Running`이고 OpenSearch 연결이 성공하더라도 실제 AI 분석이 완료된다는 보장은 없었다.
+- LangGraph의 `recommend` 노드에서 실제 KB 인덱스가 필요하다는 의존성을 확인하였다.
+- Worker 전체 설정을 바꾸지 않고 `kubectl set env`로 특정 Deployment의 환경변수만 임시 변경할 수 있었다.
+- `processed=0`과 `pending_approval=1`을 구분해 결과를 해석해야 했다.
+- Metrics뿐 아니라 실제 OpenSearch 알림 상태와 리포트 문서를 함께 확인해야 분석 결과를 검증할 수 있었다.
+- 임시 설정 변경 후에는 원래 환경변수와 Health 상태를 반드시 확인해야 한다는 점을 배웠다.
+
+#### 10. 재발 방지 및 후속 작업
+
+- `KB_TOOLS=real`을 사용하기 전에 `kb-playbooks` 인덱스 존재 여부를 확인한다.
+- 실제 KB 인덱스 및 PDF 플레이북 적재를 인프라 6단계에서 진행한다.
+- KB 미준비 상태와 Worker 자체의 실행 장애를 구분한다.
+- Worker 처리 결과는 로그, Metrics, 알림 상태, 리포트 저장 결과를 함께 확인한다.
+- 임시 환경변수 변경 시 공통 ConfigMap 수정 여부를 구분하고 원상복구까지 검증한다.
+- 실제 KB 기반 RAG 검색과 리포트 품질은 후속 단계에서 별도로 검증한다.
+- 기존 `failed` 알림의 재처리와 승인 이후 최종 처리도 별도 검증 대상으로 남긴다.
+
+**최종 상태**
+
+- Worker Deployment 정상 실행
+- 임시 `KB_TOOLS=mock` 설정 제거
+- `KB_TOOLS=real` 원상복구 확인
+- `/healthz` HTTP 200 확인
+- Mock KB 기반 분석 및 리포트 저장 성공
+- 실제 KB 인덱스 미생성 문제는 인프라 6단계 후속 작업으로 유지
+
+**최종 판단:** D2-14에서 Worker의 알림 획득·Mock KB 기반 분석·승인 대기·리포트 저장 흐름을 검증하였다. 실제 KB 검색 실패 원인을 확인하고 임시 설정으로 정상 동작 경로를 검증한 뒤 원래 설정으로 복구하였다.

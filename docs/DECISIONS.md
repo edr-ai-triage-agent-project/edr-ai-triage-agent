@@ -331,11 +331,22 @@ EDR 조사에서는 **특정 호스트와 프로세스의 이벤트를 정확하
 - Worker는 SIGTERM 수신 시 진행 중인 작업을 마치고 종료하도록 설계한다.
 - Worker 종료 유예 시간은 실제 알림 처리 시간과 체크포인트 복구 방식을 검토한 후 확정한다.
 
-**구현 및 검증 상태**
 
-- 기존 Python 코드에서 API `/healthz`, `/readyz`, Worker `/healthz`, `/metrics` 구현 확인
-- Kubernetes Probe 설정 및 실제 장애 상황 검증은 D2-14에서 진행 예정
-- D2-13 PostgreSQL 연동 이후 API readiness 및 Worker 통합 동작 검증 예정
+**구현 및 검증 상태 (D2-14 실습 후 갱신)**
+
+- Generator와 Worker Deployment를 `soc` 네임스페이스에 배포하고 Kubernetes Server Dry Run 및 Rollout을 확인하였다.
+- Worker는 `soc-config`, `soc-secrets`를 참조하며, PostgreSQL Checkpointer 초기화 및 OpenSearch HTTP 200 연결을 실제 로그로 확인하였다.
+- Worker의 startupProbe와 livenessProbe는 `/healthz`(9100)를 사용한다. 별도 readinessProbe는 설정하지 않았다.
+- Worker 종료 유예 시간을 `terminationGracePeriodSeconds: 180`으로 설정하였다. 단, 처리 중 종료 시 체크포인트 복구까지 검증한 것은 아니다.
+- Worker `/healthz`는 HTTP 200을 반환했고 `/metrics`에서 처리 상태를 확인하였다.
+- Generator 실행 결과 OpenSearch `edr-events-2026.11.19` 인덱스에 이벤트 81건이 저장되었다. 이후 Generator를 `replicas=0`으로 중지하였다.
+- 장애 4-3에서 Worker를 `replicas=1 → 0 → 1`로 변경하였다. 기존 Pod가 제거되고 새 Pod가 생성되었으며, PostgreSQL Checkpointer 재초기화와 `/healthz` HTTP 200을 확인하였다.
+- `KB_TOOLS=real`에서는 `kb-playbooks` 인덱스 미존재로 LangGraph `recommend` 노드에서 HTTP 404가 발생하였다.
+- D2-14의 Worker 통합 동작 검증을 위해 Worker Deployment에만 `KB_TOOLS=mock`을 임시 적용하였다. 새 알림 `al-0d957dbf1977`이 `pending_approval` 상태에 도달했고 `triage-reports` 문서 저장을 확인하였다.
+- 검증 종료 후 임시 환경변수를 제거하였다. `KB_TOOLS=real` 및 `/healthz` HTTP 200으로 원상복구를 확인하였다.
+- 실제 KB 기반 RAG 검색, 승인 이후 최종 처리, 장애 4-5의 처리 중 Pod 삭제·체크포인트 복구는 미검증이다.
+- API `/readyz`는 설계표에 명시된 목표이며, 이번 D2-14 실습으로 API Deployment의 해당 Probe 적용까지 검증한 것은 아니다.
+
 
 
 ### 평가: 기준점(2일차)과 최종(3일차)
