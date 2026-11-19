@@ -1,0 +1,240 @@
+[
+ {
+  "mode": "hybrid",
+  "k": 3,
+  "recall": 0.8571428571428571,
+  "rows": [
+   {
+    "id": "k1",
+    "hit": true,
+    "expected": "01_response_policy_tables.pdf",
+    "got": [
+     "01_response_policy_tables.pdf",
+     "03_playbook_ransomware_header_footer.pdf",
+     "02_playbook_credential_dump.pdf"
+    ],
+    "challenge": "표 안의 정답"
+   },
+   {
+    "id": "k2",
+    "hit": true,
+    "expected": "01_response_policy_tables.pdf",
+    "got": [
+     "07_weekly_report_chart.pdf",
+     "01_response_policy_tables.pdf",
+     "03_playbook_ransomware_header_footer.pdf"
+    ],
+    "challenge": "표 안의 정답"
+   },
+   {
+    "id": "k3",
+    "hit": true,
+    "expected": "01_response_policy_tables.pdf",
+    "got": [
+     "01_response_policy_tables.pdf",
+     "04_playbook_macro_powershell_code.pdf",
+     "04_playbook_macro_powershell_code.pdf"
+    ],
+    "challenge": "일반 문단"
+   },
+   {
+    "id": "k4",
+    "hit": true,
+    "expected": "02_playbook_credential_dump.pdf",
+    "got": [
+     "01_response_policy_tables.pdf",
+     "02_playbook_credential_dump.pdf",
+     "08_analyst_notes_attack_en.pdf"
+    ],
+    "challenge": "기준 문서"
+   },
+   {
+    "id": "k5",
+    "hit": true,
+    "expected": "03_playbook_ransomware_header_footer.pdf",
+    "got": [
+     "03_playbook_ransomware_header_footer.pdf",
+     "09_response_matrix_complex_tables.pdf",
+     "03_playbook_ransomware_header_footer.pdf"
+    ],
+    "challenge": "머리말·꼬리말 노이즈"
+   },
+   {
+    "id": "k6",
+    "hit": true,
+    "expected": "03_playbook_ransomware_header_footer.pdf",
+    "got": [
+     "03_playbook_ransomware_header_footer.pdf",
+     "09_response_matrix_complex_tables.pdf",
+     "05_newsletter_two_column.pdf"
+    ],
+    "challenge": "여러 쪽 중 마지막 쪽"
+   },
+   {
+    "id": "k7",
+    "hit": true,
+    "expected": "04_playbook_macro_powershell_code.pdf",
+    "got": [
+     "04_playbook_macro_powershell_code.pdf",
+     "08_analyst_notes_attack_en.pdf",
+     "04_playbook_macro_powershell_code.pdf"
+    ],
+    "challenge": "코드 블록 주변 설명"
+   },
+   {
+    "id": "k8",
+    "hit": true,
+    "expected": "05_newsletter_two_column.pdf",
+    "got": [
+     "05_newsletter_two_column.pdf",
+     "05_newsletter_two_column.pdf",
+     "09_response_matrix_complex_tables.pdf"
+    ],
+    "challenge": "2단 레이아웃"
+   },
+   {
+    "id": "k9",
+    "hit": true,
+    "expected": "05_newsletter_two_column.pdf",
+    "got": [
+     "05_newsletter_two_column.pdf",
+     "05_newsletter_two_column.pdf",
+     "01_response_policy_tables.pdf"
+    ],
+    "challenge": "2단 레이아웃"
+   },
+   {
+    "id": "k10",
+    "hit": false,
+    "expected": "06_false_positive_guide_scanned.pdf",
+    "got": [
+     "03_playbook_ransomware_header_footer.pdf",
+     "01_response_policy_tables.pdf",
+     "09_response_matrix_complex_tables.pdf"
+    ],
+    "challenge": "스캔본 OCR"
+   },
+   {
+    "id": "k11",
+    "hit": true,
+    "expected": "07_weekly_report_chart.pdf",
+    "got": [
+     "07_weekly_report_chart.pdf",
+     "01_response_policy_tables.pdf",
+     "09_response_matrix_complex_tables.pdf"
+    ],
+    "challenge": "보고서 문단"
+   },
+   {
+    "id": "k12",
+    "hit": true,
+    "expected": "07_weekly_report_chart.pdf",
+    "got": [
+     "07_weekly_report_chart.pdf",
+     "09_response_matrix_complex_tables.pdf",
+     "09_response_matrix_complex_tables.pdf"
+    ],
+    "challenge": "차트 이미지 속 숫자 (텍스트로는 못 찾음)"
+   },
+   {
+    "id": "k13",
+    "hit": false,
+    "expected": "08_analyst_notes_attack_en.pdf",
+    "got": [
+     "02_playbook_credential_dump.pdf",
+     "02_playbook_credential_dump.pdf",
+     "04_playbook_macro_powershell_code.pdf"
+    ],
+    "challenge": "한국어 질문 → 영어 문서 (02와 경쟁)"
+   },
+   {
+    "id": "k14",
+    "hit": false,
+    "expected": "08_analyst_notes_attack_en.pdf",
+    "got": [
+     "04_playbook_macro_powershell_code.pdf",
+     "01_response_policy_tables.pdf",
+     "04_playbook_macro_powershell_code.pdf"
+    ],
+    "challenge": "교차 언어 의미 검색"
+   },
+   {
+    "id": "k15",
+    "hit": true,
+    "expected": "09_response_matrix_complex_tables.pdf",
+    "got": [
+     "01_response_policy_tables.pdf",
+     "05_newsletter_two_column.pdf",
+     "09_response_matrix_complex_tables.pdf"
+    ],
+    "challenge": "병합 셀(가로) + 2단 헤더: high 열 두 칸이 하나로 합쳐짐"
+   },
+   {
+    "id": "k16",
+    "hit": true,
+    "expected": "09_response_matrix_complex_tables.pdf",
+    "got": [
+     "09_response_matrix_complex_tables.pdf",
+     "03_playbook_ransomware_header_footer.pdf",
+     "02_playbook_credential_dump.pdf"
+    ],
+    "challenge": "병합 셀(세로) + 행·열 교차 조회"
+   },
+   {
+    "id": "k17",
+    "hit": true,
+    "expected": "09_response_matrix_complex_tables.pdf",
+    "got": [
+     "09_response_matrix_complex_tables.pdf",
+     "09_response_matrix_complex_tables.pdf",
+     "01_response_policy_tables.pdf"
+    ],
+    "challenge": "각주(※1)를 표 아래에서 찾아 연결"
+   },
+   {
+    "id": "k18",
+    "hit": true,
+    "expected": "09_response_matrix_complex_tables.pdf",
+    "got": [
+     "09_response_matrix_complex_tables.pdf",
+     "09_response_matrix_complex_tables.pdf",
+     "01_response_policy_tables.pdf"
+    ],
+    "challenge": "〃(위와 같음) 표기 해석: 표에는 '당직 팀장'이 아니라 '〃'만 있음"
+   },
+   {
+    "id": "k19",
+    "hit": true,
+    "expected": "09_response_matrix_complex_tables.pdf",
+    "got": [
+     "09_response_matrix_complex_tables.pdf",
+     "09_response_matrix_complex_tables.pdf",
+     "07_weekly_report_chart.pdf"
+    ],
+    "challenge": "쪽을 넘어간 표 + 병합 칸이 잘림 + 〃 표기"
+   },
+   {
+    "id": "k20",
+    "hit": true,
+    "expected": "09_response_matrix_complex_tables.pdf",
+    "got": [
+     "09_response_matrix_complex_tables.pdf",
+     "09_response_matrix_complex_tables.pdf",
+     "07_weekly_report_chart.pdf"
+    ],
+    "challenge": "선 없는 고정폭 표: 숫자가 어느 열인지"
+   },
+   {
+    "id": "k21",
+    "hit": true,
+    "expected": "09_response_matrix_complex_tables.pdf",
+    "got": [
+     "09_response_matrix_complex_tables.pdf",
+     "03_playbook_ransomware_header_footer.pdf",
+     "03_playbook_ransomware_header_footer.pdf"
+    ],
+    "challenge": "가로 페이지의 넓은 표 (03번 PDF와 경쟁)"
+   }
+  ]
+ }
+]
