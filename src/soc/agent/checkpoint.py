@@ -29,8 +29,35 @@ def get_checkpointer():
     # psycopg 연결 풀을 settings.postgres_dsn으로 만들고(연결 옵션: autocommit=True, prepare_threshold=0, row_factory=dict_row),
     # PostgresSaver(풀)을 만든 뒤 setup()을 한 번 실행합니다 (체크포인트 테이블 생성, 여러 번 실행해도 안전).
     # API는 여러 요청을 동시에 처리하므로 연결 하나보다 풀이 안전합니다.
-    log.warning("TODO[H-2] 전: Postgres 대신 메모리에 저장합니다")
-    return InMemorySaver()
+    # log.warning("TODO[H-2] 전: Postgres 대신 메모리에 저장합니다")
+    # 2. PostgreSQL 저장을 위한 라이브러리 준비
+    from langgraph.checkpoint.postgres import PostgresSaver
+    from psycopg.rows import dict_row
+    from psycopg_pool import NullConnectionPool
+
+    # 3. PostgreSQL 연결 풀 생성
+    pool = NullConnectionPool(
+        conninfo=settings.postgres_dsn,
+        max_size=5,
+        open=True,
+        kwargs={
+            "autocommit": True,
+            "prepare_threshold": 0,
+            "row_factory": dict_row,
+        },
+    )
+
+    try:
+        # 4. PostgreSQL 기반 Checkpointer 생성
+        saver = PostgresSaver(pool)
+        # 5. 필요한 테이블 생성 및 초기화
+        saver.setup()
+    except Exception:
+        pool.close()
+        raise
+
+    log.info("PostgreSQL Checkpointer 초기화 완료")
+    return saver
 
 
 def ping() -> bool:
